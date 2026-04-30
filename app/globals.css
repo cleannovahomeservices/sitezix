@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --accent-1: #6d28d9;
+    --accent-2: #3b82f6;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: #000; color: #f8fafc; }
+  body { font-family: var(--font-jakarta), sans-serif; -webkit-font-smoothing: antialiased; }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+}
+
+@layer components {
+  .mesh-bg { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 0; }
+  .orb { position: absolute; border-radius: 50%; filter: blur(130px); }
+  .orb-1 { width: 720px; height: 720px; top: -220px; left: 8%; background: radial-gradient(circle, #1a0533 0%, transparent 70%); opacity: .48; }
+  .orb-2 { width: 620px; height: 620px; bottom: -160px; right: 4%; background: radial-gradient(circle, #0a1628 0%, transparent 70%); opacity: .48; }
+  .orb-3 { width: 520px; height: 520px; top: 50%; left: 50%; transform: translate(-50%,-50%); background: radial-gradient(circle, #0d0b20 0%, transparent 70%); opacity: .38; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .orb { animation: none !important; }
+  }
+}
