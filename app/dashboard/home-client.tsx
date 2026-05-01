@@ -104,19 +104,37 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
 
   async function handleGenerate() {
     const value = prompt.trim();
-    if (!value) { taRef.current?.focus(); return; }
-    if (credits < 1) { toast('No credits left — upgrade to keep building.'); return; }
+    if (!value || generating) { taRef.current?.focus(); return; }
+
+    const historyToSend = chat
+      .filter((m) => !m.pending)
+      .map((m) => ({ role: m.role, content: m.content }));
+
+    // Optimistically add the user's message + a pending assistant placeholder.
+    setChat((c) => [...c, { role: 'user', content: value }, { role: 'assistant', content: 'Pensando…', pending: true }]);
+    setPrompt('');
+    setTimeout(() => { if (taRef.current) { taRef.current.style.height = 'auto'; } }, 0);
 
     setGenerating(true);
-    setResult(null);
-    setProgressStep(1);
-    setProgressMessage(PROGRESS_STEPS[0]);
+    setProgressStep(0);
+    setProgressMessage('');
+
+    let buildStarted = false;
+    const replacePending = (content: string) => {
+      setChat((c) => {
+        const next = [...c];
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].pending) { next[i] = { role: 'assistant', content }; break; }
+        }
+        return next;
+      });
+    };
 
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: value, features: pills }),
+        body: JSON.stringify({ prompt: value, features: pills, history: historyToSend }),
       });
 
       if (!res.ok || !res.body) {
@@ -130,6 +148,7 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
       let finalProjectId = '';
       let finalHtml = '';
       let streamError = '';
+      let chatReply = '';
 
       while (true) {
         const { value: chunk, done } = await reader.read();
@@ -141,7 +160,18 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
           if (!line.trim()) continue;
           try {
             const evt = JSON.parse(line);
-            if (evt.type === 'progress') {
+            if (evt.type === 'chat') {
+              chatReply = evt.reply || '';
+            } else if (evt.type === 'ack') {
+              buildStarted = true;
+              replacePending(evt.reply || 'Building it now.');
+              setProgressStep(1);
+              setProgressMessage(PROGRESS_STEPS[0]);
+            } else if (evt.type === 'progress') {
+              if (!buildStarted) {
+                buildStarted = true;
+                replacePending('Building it now.');
+              }
               setProgressStep(evt.step);
               setProgressMessage(evt.message);
             } else if (evt.type === 'complete') {
@@ -156,20 +186,44 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
         }
       }
 
-      if (streamError) throw new Error(streamError);
-      if (!finalHtml || !finalProjectId) throw new Error('Generation produced no HTML');
+      if (streamError) {
+        replacePending(streamError);
+        toast(streamError);
+        return;
+      }
+
+      if (chatReply && !finalHtml) {
+        replacePending(chatReply);
+        return;
+      }
+
+      if (!finalHtml || !finalProjectId) {
+        const msg = 'Generation produced no HTML';
+        replacePending(msg);
+        toast(msg);
+        return;
+      }
 
       setResult({ projectId: finalProjectId, html: finalHtml });
-      setChat([
-        { role: 'user', content: value },
-        { role: 'assistant', content: 'Your site is ready. Tell me what you want to change.' },
-      ]);
+      setChat((c) => {
+        const next = [...c];
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].pending) { next[i] = { role: 'assistant', content: 'Your site is ready. Tell me what you want to change.' }; break; }
+        }
+        // If no pending was found (already replaced by ack), append a final ready note.
+        if (!next.some((m) => m.content.startsWith('Your site is ready'))) {
+          next.push({ role: 'assistant', content: 'Your site is ready. Tell me what you want to change.' });
+        }
+        return next;
+      });
       setCredits((c) => Math.max(c - 1, 0));
       toast('Site generated!');
 
       if (pills.deploy) autoDeploy(finalProjectId);
     } catch (e: unknown) {
-      toast(e instanceof Error ? e.message : 'Something went wrong');
+      const msg = e instanceof Error ? e.message : 'Something went wrong';
+      replacePending(msg);
+      toast(msg);
     } finally {
       setGenerating(false);
       setProgressStep(0);
@@ -374,14 +428,40 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
   }
 
   // ── HOME VIEW ──
+  const hasChat = chat.length > 0;
   return (
-    <div className="h-full flex flex-col items-center justify-center px-8 py-10">
-      <div className="relative z-10 w-full max-w-[660px] flex flex-col items-center gap-7">
+    <div className={`h-full flex flex-col items-center ${hasChat ? 'justify-end pb-6 pt-4' : 'justify-center py-10'} px-8`}>
+      <div className="relative z-10 w-full max-w-[660px] flex flex-col items-center gap-5">
 
-        <h1 className="text-[clamp(28px,4vw,46px)] font-normal tracking-tight text-white text-center leading-[1.15] min-h-[1.2em] animate-fade-up">
-          {hl}
-          <span className="inline-block w-[2px] h-[0.85em] bg-white/70 ml-[2px] align-middle animate-blink" aria-hidden="true" />
-        </h1>
+        {!hasChat && (
+          <h1 className="text-[clamp(28px,4vw,46px)] font-normal tracking-tight text-white text-center leading-[1.15] min-h-[1.2em] animate-fade-up">
+            {hl}
+            <span className="inline-block w-[2px] h-[0.85em] bg-white/70 ml-[2px] align-middle animate-blink" aria-hidden="true" />
+          </h1>
+        )}
+
+        {hasChat && (
+          <div className="w-full max-h-[55vh] overflow-y-auto px-1 space-y-3 [scrollbar-width:thin]">
+            {chat.map((m, i) => (
+              <div
+                key={i}
+                className={
+                  m.role === 'user'
+                    ? 'ml-auto max-w-[80%] bg-white text-black text-[13.5px] leading-relaxed rounded-2xl rounded-br-md px-4 py-2.5 shadow-sm'
+                    : 'mr-auto max-w-[88%] bg-white/[0.06] border border-white/[0.08] text-white/85 text-[13.5px] leading-relaxed rounded-2xl rounded-bl-md px-4 py-2.5'
+                }
+              >
+                {m.pending ? (
+                  <span className="flex items-center gap-2 text-white/60">
+                    <Loader2 size={12} className="animate-spin" /> {m.content}
+                  </span>
+                ) : (
+                  m.content
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Input card */}
         <div
@@ -421,7 +501,7 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
             </div>
             <button
               onClick={handleGenerate}
-              disabled={generating || credits < 1}
+              disabled={generating || !prompt.trim()}
               className="w-[34px] h-[34px] rounded-full bg-[#111] hover:bg-[#2d2d2d] active:scale-95 transition-all flex items-center justify-center ml-auto shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {generating ? <Loader2 size={14} className="text-white animate-spin" /> : <Send size={14} className="text-white" strokeWidth={2} />}
@@ -447,7 +527,7 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
         )}
 
         {/* Templates strip */}
-        {!generating && (
+        {!generating && !hasChat && (
           <div className="w-full max-w-[800px]">
             <div className="text-[10.5px] font-semibold tracking-[0.07em] text-white/24 uppercase mb-3 px-0.5">Quick start</div>
             <div className="flex gap-2.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

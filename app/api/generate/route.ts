@@ -5,9 +5,24 @@ export const runtime = 'nodejs';
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
+const MODEL_INTENT = 'meta-llama/llama-3.3-70b-instruct:free';
 const MODEL_ANALYZE = 'meta-llama/llama-3.3-70b-instruct:free';
 const MODEL_STRUCTURE = 'qwen/qwen3-coder:free';
 const MODEL_POLISH = 'anthropic/claude-sonnet-4.5';
+
+const INTENT_PROMPT = `You are Sitezix's chat assistant. Sitezix is an AI website builder.
+
+Decide what the user wants from their latest message in the conversation:
+- "build" — they're describing a website to create (e.g. "make me a portfolio", "una landing para mi cafetería", "I want a SaaS site for my product").
+- "chat" — anything else: greeting, vague message, small talk, asking what Sitezix does, asking for ideas, clarification questions, single words like "hola"/"hi"/"thanks".
+
+Reply in the user's language (detect it). Always return ONLY valid minified JSON, no prose, no fences:
+{"intent":"build"|"chat","reply":"..."}
+
+Rules for "reply":
+- If intent is "chat": 1-2 friendly sentences. If they haven't described a website yet, ask what kind they want to build (offer 2-3 concrete suggestions).
+- If intent is "build": one short sentence in their language confirming you'll build it now (e.g. "¡Perfecto, lo construyo ahora!" / "Got it, building it now!").
+- Never include markdown, code, or HTML in "reply".`;
 
 const ANALYZE_PROMPT = `You analyze a website-build request and extract structured planning data.
 Return ONLY valid minified JSON, no prose, no markdown fences. Schema:
@@ -108,6 +123,43 @@ function stripFences(s: string): string {
   return s.replace(/^```(?:html|json)?\s*/i, '').replace(/```\s*$/i, '').trim();
 }
 
+type IntentResult = { intent: 'build' | 'chat'; reply: string };
+
+async function classifyIntent(
+  apiKey: string,
+  prompt: string,
+  history: { role: 'user' | 'assistant'; content: string }[],
+): Promise<IntentResult> {
+  const transcript = history
+    .slice(-6)
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+    .join('\n');
+  const userBlock = transcript
+    ? `Conversation so far:\n${transcript}\n\nLatest user message:\n${prompt}`
+    : `Latest user message:\n${prompt}`;
+
+  try {
+    const raw = await callOpenRouter(apiKey, MODEL_INTENT, INTENT_PROMPT, userBlock, 300);
+    const cleaned = stripFences(raw);
+    let parsed: { intent?: string; reply?: string };
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      parsed = match ? JSON.parse(match[0]) : {};
+    }
+    const intent = parsed.intent === 'chat' ? 'chat' : 'build';
+    const reply = typeof parsed.reply === 'string' && parsed.reply.trim()
+      ? parsed.reply.trim()
+      : intent === 'chat'
+        ? '¡Hola! ¿Qué tipo de web te gustaría construir? Puedo hacerte una landing, un portafolio, una tienda, etc.'
+        : 'Perfecto, lo construyo ahora.';
+    return { intent, reply };
+  } catch {
+    return { intent: 'build', reply: 'Building it now.' };
+  }
+}
+
 function parseAnalysis(raw: string): AnalysisJson {
   const cleaned = stripFences(raw);
   try {
@@ -141,10 +193,15 @@ export async function POST(request: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { prompt, features } = await request.json().catch(() => ({}));
+  const { prompt, features, history } = await request.json().catch(() => ({}));
   if (!prompt || typeof prompt !== 'string') {
     return NextResponse.json({ error: 'Missing prompt' }, { status: 400 });
   }
+  const safeHistory: { role: 'user' | 'assistant'; content: string }[] = Array.isArray(history)
+    ? history
+        .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+        .map((m) => ({ role: m.role, content: String(m.content).slice(0, 2000) }))
+    : [];
 
   const admin = createAdminClient();
 
@@ -153,8 +210,8 @@ export async function POST(request: Request) {
     .select('credits, full_name')
     .eq('id', user.id)
     .single();
-  if (!profile || profile.credits < 1) {
-    return NextResponse.json({ error: 'No credits remaining' }, { status: 402 });
+  if (!profile) {
+    return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
   }
 
   const apiKey = process.env.OPENROUTER_API_KEY;
@@ -176,6 +233,30 @@ export async function POST(request: Request) {
           role: 'user',
           content: prompt,
         });
+
+        // ── Step 0: classify intent (chat vs build) ─────────────────
+        if (apiKey && apiKey !== 'PLACEHOLDER_REPLACE_ME') {
+          const intent = await classifyIntent(apiKey, prompt, safeHistory);
+          if (intent.intent === 'chat') {
+            await admin.from('chat_history').insert({
+              user_id: user.id,
+              role: 'assistant',
+              content: intent.reply.slice(0, 2000),
+            });
+            send({ type: 'chat', reply: intent.reply });
+            controller.close();
+            return;
+          }
+          // For build intent, surface the assistant's confirmation as a chat-style reply
+          // before progress events kick in.
+          send({ type: 'ack', reply: intent.reply });
+        }
+
+        if (profile.credits < 1) {
+          send({ type: 'error', error: 'No credits remaining' });
+          controller.close();
+          return;
+        }
 
         let html = '';
 
