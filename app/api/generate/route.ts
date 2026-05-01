@@ -125,11 +125,71 @@ function stripFences(s: string): string {
 
 type IntentResult = { intent: 'build' | 'chat'; reply: string };
 
+const DEFAULT_CHAT_REPLY_ES =
+  '¡Hola! Soy Sitezix. Cuéntame qué tipo de web quieres construir — por ejemplo: una landing para una app, un portafolio, una tienda online, o un blog.';
+const DEFAULT_CHAT_REPLY_EN =
+  "Hi! I'm Sitezix. Tell me what kind of website you'd like — for example: a SaaS landing, a portfolio, an online store, or a blog.";
+const DEFAULT_BUILD_REPLY_ES = '¡Perfecto, lo construyo ahora!';
+const DEFAULT_BUILD_REPLY_EN = 'Got it — building it now!';
+
+function detectSpanish(s: string): boolean {
+  return /[ñáéíóúü¿¡]|\b(hola|qué|que|cómo|como|tal|gracias|por\s+favor|porfa|vale|hazme|construye|crea|necesito|quiero|página|sitio|tienda|portafolio|blog|saludos|buenas)\b/i.test(s);
+}
+
+const BUILD_KEYWORDS = /\b(build|make|create|generate|design|website|site|landing|portfolio|shop|store|saas|dashboard|blog|app|construye|construir|crea|crear|hazme|haz(?:me)?|diseña|disena|necesito|quiero|p[aá]gina|sitio|tienda|portafolio|portfolio|landing)\b/i;
+
+const GREETING_PATTERNS: RegExp[] = [
+  /^(hola+|hi+|hello+|hey+|holi+|holu+|holaaa+|saludos|hola amigo)\b/i,
+  /^(qu[eé] tal|que tal|c[oó]mo (estás|est[aá]s|va)|how are you|whats up|what's up|sup)\b/i,
+  /^(buen(o|a)s)\b/i,
+  /^(gracias|thanks|thx|ok|okey|okay|vale|s[ií]|no|nop|yep)\b\W*$/i,
+  /^(ayuda|help|ideas?|sugerencias?|qu[eé] puedes hacer|what can you do|qui[eé]n eres|who are you|que eres|qu[eé] es esto|what is this)\b/i,
+  /^[\?\!\.,\s]+$/,
+];
+
+function quickClassify(prompt: string): 'chat' | null {
+  const cleaned = prompt.trim().toLowerCase();
+  if (cleaned.length < 3) return 'chat';
+
+  for (const p of GREETING_PATTERNS) {
+    if (p.test(cleaned)) return 'chat';
+  }
+
+  const wordCount = cleaned.split(/\s+/).length;
+  const hasBuildKw = BUILD_KEYWORDS.test(cleaned);
+
+  // Short message with no build keywords → conversational
+  if (wordCount <= 3 && !hasBuildKw) return 'chat';
+
+  return null; // ambiguous, ask the LLM
+}
+
 async function classifyIntent(
   apiKey: string,
   prompt: string,
   history: { role: 'user' | 'assistant'; content: string }[],
 ): Promise<IntentResult> {
+  const isSpanish = detectSpanish(prompt) || history.some((m) => detectSpanish(m.content));
+
+  // ── Fast path: heuristic for obvious chat ──
+  const quick = quickClassify(prompt);
+  if (quick === 'chat') {
+    return {
+      intent: 'chat',
+      reply: isSpanish ? DEFAULT_CHAT_REPLY_ES : DEFAULT_CHAT_REPLY_EN,
+    };
+  }
+
+  // ── Strong signal for build: long message OR build keywords present ──
+  const wordCount = prompt.trim().split(/\s+/).length;
+  if (wordCount >= 6 || BUILD_KEYWORDS.test(prompt)) {
+    return {
+      intent: 'build',
+      reply: isSpanish ? DEFAULT_BUILD_REPLY_ES : DEFAULT_BUILD_REPLY_EN,
+    };
+  }
+
+  // ── Ambiguous: ask the LLM ──
   const transcript = history
     .slice(-6)
     .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
@@ -141,23 +201,34 @@ async function classifyIntent(
   try {
     const raw = await callOpenRouter(apiKey, MODEL_INTENT, INTENT_PROMPT, userBlock, 300);
     const cleaned = stripFences(raw);
-    let parsed: { intent?: string; reply?: string };
+    let parsed: { intent?: string; reply?: string } = {};
     try {
       parsed = JSON.parse(cleaned);
     } catch {
       const match = cleaned.match(/\{[\s\S]*\}/);
-      parsed = match ? JSON.parse(match[0]) : {};
+      if (match) {
+        try { parsed = JSON.parse(match[0]); } catch { /* ignore */ }
+      }
     }
-    const intent = parsed.intent === 'chat' ? 'chat' : 'build';
-    const reply = typeof parsed.reply === 'string' && parsed.reply.trim()
-      ? parsed.reply.trim()
-      : intent === 'chat'
-        ? '¡Hola! ¿Qué tipo de web te gustaría construir? Puedo hacerte una landing, un portafolio, una tienda, etc.'
-        : 'Perfecto, lo construyo ahora.';
-    return { intent, reply };
+    if (parsed.intent === 'chat' || parsed.intent === 'build') {
+      const reply = typeof parsed.reply === 'string' && parsed.reply.trim()
+        ? parsed.reply.trim()
+        : parsed.intent === 'chat'
+          ? (isSpanish ? DEFAULT_CHAT_REPLY_ES : DEFAULT_CHAT_REPLY_EN)
+          : (isSpanish ? DEFAULT_BUILD_REPLY_ES : DEFAULT_BUILD_REPLY_EN);
+      return { intent: parsed.intent, reply };
+    }
   } catch {
-    return { intent: 'build', reply: 'Building it now.' };
+    // fall through
   }
+
+  // ── Default for ambiguous + LLM failure: chat (safer than building junk) ──
+  return {
+    intent: 'chat',
+    reply: isSpanish
+      ? '¿Puedes darme un poco más de detalle sobre la web que quieres construir?'
+      : 'Could you give me a bit more detail about the website you want to build?',
+  };
 }
 
 function parseAnalysis(raw: string): AnalysisJson {
