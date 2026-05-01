@@ -5,8 +5,8 @@ export const runtime = 'nodejs';
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
-const MODEL_ANALYZE = 'meta-llama/llama-4-scout:free';
-const MODEL_STRUCTURE = 'google/gemini-2.0-flash-exp:free';
+const MODEL_ANALYZE = 'meta-llama/llama-3.3-70b-instruct:free';
+const MODEL_STRUCTURE = 'qwen/qwen3-coder:free';
 const MODEL_POLISH = 'anthropic/claude-sonnet-4.5';
 
 const ANALYZE_PROMPT = `You analyze a website-build request and extract structured planning data.
@@ -204,10 +204,12 @@ export async function POST(request: Request) {
           let structureHtml = '';
           try {
             structureHtml = stripFences(await callOpenRouter(apiKey, MODEL_STRUCTURE, STRUCTURE_PROMPT, structureUserMsg, 4000));
-          } catch (e) {
-            send({ type: 'error', error: `Structure step failed: ${e instanceof Error ? e.message : 'unknown'}` });
-            controller.close();
-            return;
+          } catch {
+            // Fall back to a minimal skeleton derived from the analysis so step 3 can still polish.
+            structureHtml = buildSkeleton(analysis, prompt);
+          }
+          if (!structureHtml || structureHtml.length < 80) {
+            structureHtml = buildSkeleton(analysis, prompt);
           }
 
           // ── Step 3: polish ──────────────────────────────────────────
@@ -273,6 +275,33 @@ export async function POST(request: Request) {
       'X-Accel-Buffering': 'no',
     },
   });
+}
+
+function buildSkeleton(a: AnalysisJson, prompt: string): string {
+  const sections = a.sections.map((s) => {
+    const k = s.toLowerCase();
+    const kw = a.imageKeywords[0] || 'business';
+    if (k.includes('hero')) {
+      return `<section class="hero"><h1>${a.businessType}</h1><p>${prompt}</p><a href="#cta" class="btn-primary">Get started</a><img src="UNSPLASH:${kw}" alt="${a.businessType}" /></section>`;
+    }
+    if (k.includes('feature')) {
+      return `<section class="features"><h2>Features</h2><div class="grid"><article><h3>Fast</h3><p>Quick and reliable.</p></article><article><h3>Simple</h3><p>Easy to use.</p></article><article><h3>Powerful</h3><p>Built to scale.</p></article></div></section>`;
+    }
+    if (k.includes('pricing')) {
+      return `<section class="pricing"><h2>Pricing</h2><div class="grid"><article><h3>Starter</h3><p>$9/mo</p></article><article><h3>Pro</h3><p>$29/mo</p></article><article><h3>Team</h3><p>$99/mo</p></article></div></section>`;
+    }
+    if (k.includes('testim')) {
+      return `<section class="testimonials"><h2>What customers say</h2><blockquote>"This changed how we work."<cite>— Happy customer</cite></blockquote></section>`;
+    }
+    if (k.includes('cta')) {
+      return `<section id="cta" class="cta"><h2>Ready to start?</h2><a href="#" class="btn-primary">Get started</a></section>`;
+    }
+    if (k.includes('footer')) {
+      return `<footer><p>&copy; ${new Date().getFullYear()} ${a.businessType}</p></footer>`;
+    }
+    return `<section><h2>${s}</h2><p>Content for ${s}.</p></section>`;
+  }).join('\n');
+  return `<header><nav><a href="#" class="logo">${a.businessType}</a><a href="#cta" class="btn-primary">Get started</a></nav></header>\n<main>${sections}</main>`;
 }
 
 function renderDemoFallback(prompt: string): string {
