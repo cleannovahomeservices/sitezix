@@ -3,8 +3,7 @@
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, ExternalLink, Trash2, Lock, CreditCard, Rocket } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
+import { Search, Plus, ExternalLink, Trash2, Lock, CreditCard, Rocket, Eye } from 'lucide-react';
 import { useToast } from '@/components/toast';
 
 type Project = {
@@ -33,12 +32,17 @@ export function ProjectsClient({ projects: initial }: { projects: Project[] }) {
   );
 
   async function handleDelete(id: string) {
-    const supabase = createClient();
-    const { error } = await supabase.from('projects').delete().eq('id', id);
-    if (error) { toast(error.message); return; }
-    setProjects((p) => p.filter((x) => x.id !== id));
-    startTransition(() => router.refresh());
-    toast('Project deleted');
+    if (!confirm('Delete this project permanently? If it was deployed, it will also be removed from Vercel.')) return;
+    try {
+      const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Delete failed');
+      setProjects((p) => p.filter((x) => x.id !== id));
+      startTransition(() => router.refresh());
+      toast('Project deleted');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Delete failed');
+    }
   }
 
   return (
@@ -91,7 +95,10 @@ export function ProjectsClient({ projects: initial }: { projects: Project[] }) {
 
 function ProjectCard({ project, color, onDelete }: { project: Project; color: string; onDelete: (id: string) => void }) {
   return (
-    <div className="group bg-white/[0.04] border border-white/[0.07] rounded-xl p-4 transition-all hover:bg-white/[0.07] hover:border-white/[0.12] hover:-translate-y-0.5">
+    <Link
+      href={`/dashboard/projects/${project.id}`}
+      className="group block bg-white/[0.04] border border-white/[0.07] rounded-xl p-4 transition-all hover:bg-white/[0.07] hover:border-white/[0.12] hover:-translate-y-0.5"
+    >
       <div className="flex items-start justify-between mb-3">
         <div
           className="w-9 h-9 rounded-[9px] flex items-center justify-center text-base font-bold text-white shrink-0"
@@ -100,19 +107,26 @@ function ProjectCard({ project, color, onDelete }: { project: Project; color: st
           {project.name.charAt(0).toUpperCase()}
         </div>
         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <span
+            className="w-7 h-7 rounded-md bg-white/[0.08] text-white/60 flex items-center justify-center"
+            title="Preview"
+          >
+            <Eye size={12} />
+          </span>
           {project.preview_url && (
             <a
               href={project.preview_url}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
               className="w-7 h-7 rounded-md bg-white/[0.08] hover:bg-white/[0.15] text-white/60 hover:text-white flex items-center justify-center transition-colors"
-              title="Open"
+              title="Open live site"
             >
               <ExternalLink size={12} />
             </a>
           )}
           <button
-            onClick={() => onDelete(project.id)}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(project.id); }}
             className="w-7 h-7 rounded-md bg-white/[0.08] hover:bg-red-500/20 text-white/60 hover:text-red-400 flex items-center justify-center transition-colors"
             title="Delete"
           >
@@ -122,7 +136,7 @@ function ProjectCard({ project, color, onDelete }: { project: Project; color: st
       </div>
       <div className="text-[14px] font-semibold mb-1 truncate">{project.name}</div>
       <div className="text-[11.5px] text-white/30 truncate mb-2.5">
-        {project.preview_url ? project.preview_url.replace(/^https?:\/\//, '') : 'Not deployed'}
+        {project.preview_url ? project.preview_url.replace(/^https?:\/\//, '') : 'Click to preview'}
       </div>
       <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
         {project.has_login && (<Badge icon={Lock} label="Login" />)}
@@ -140,7 +154,7 @@ function ProjectCard({ project, color, onDelete }: { project: Project; color: st
           {project.status}
         </span>
       </div>
-    </div>
+    </Link>
   );
 }
 

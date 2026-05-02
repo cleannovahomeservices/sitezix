@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient, createAdminClient } from '@/lib/supabase/server';
+import { generateLogo } from '@/lib/logo';
+import { replaceImagePlaceholders } from '@/lib/images';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -40,7 +42,8 @@ TECH STACK (use exactly this):
   • Bold / brutalist: "Space Grotesk" + "Inter Tight"
   • Friendly / consumer: "Plus Jakarta Sans" or "DM Sans"
 - Lucide icons: <script src="https://unpkg.com/lucide@latest"></script>, then call lucide.createIcons() on DOMContentLoaded. Use <i data-lucide="check"></i> syntax.
-- Images: https://source.unsplash.com/1200x800/?{keyword1},{keyword2} — pick 2 specific keywords per image (e.g. "modern,office", "developer,laptop"). Use width/height appropriate to layout.
+- Images: use src="IMG:keyword1,keyword2" — these placeholders will be replaced server-side with real Unsplash/Pexels URLs after generation. Pick 2 specific keywords per image (e.g. src="IMG:modern,office", src="IMG:developer,laptop"). For portrait images add |portrait, e.g. src="IMG:woman,smiling|portrait". Always include alt text.
+- Logo: use src="LOGO_PLACEHOLDER" for the brand logo image. It will be replaced with a custom AI-generated logo. Use it in the navbar AND footer. Recommended sizes: w-8 h-8 in navbar, w-10 h-10 in footer.
 - Tailwind config: extend in a <script> tag if you need custom colors or fonts.
 
 DESIGN RULES — NON-NEGOTIABLE:
@@ -153,7 +156,7 @@ function stripFences(s: string): string {
 type ChatMsg = { role: 'user' | 'assistant'; content: string };
 type IntentResult =
   | { kind: 'chat'; reply: string }
-  | { kind: 'build'; ack: string; brief: string; businessType: string };
+  | { kind: 'build'; ack: string; brief: string; businessType: string; businessName: string; primaryColor: string };
 
 async function classifyIntent(
   client: Anthropic,
@@ -192,8 +195,16 @@ async function classifyIntent(
                 type: 'string',
                 description: 'Category, e.g. "saas-landing", "portfolio", "ecommerce", "agency", "blog", "restaurant", "personal-brand".',
               },
+              businessName: {
+                type: 'string',
+                description: 'Suggested brand/business name. If the user provided one, use exactly that. Otherwise invent something short, modern, brandable (1-2 words, no generic suffixes like "Hub" or "Labs" unless it fits).',
+              },
+              primaryColor: {
+                type: 'string',
+                description: 'Suggested primary brand color as a hex code, e.g. "#6366f1". Pick something tasteful that matches the industry and tone.',
+              },
             },
-            required: ['ack', 'websiteBrief', 'businessType'],
+            required: ['ack', 'websiteBrief', 'businessType', 'businessName', 'primaryColor'],
           },
         },
       ],
@@ -207,12 +218,18 @@ async function classifyIntent(
           ack?: string;
           websiteBrief?: string;
           businessType?: string;
+          businessName?: string;
+          primaryColor?: string;
         };
         return {
           kind: 'build',
           ack: input.ack?.trim() || (isSpanish ? ACK_FALLBACK_ES : ACK_FALLBACK_EN),
           brief: input.websiteBrief?.trim() || prompt,
           businessType: input.businessType?.trim() || 'website',
+          businessName: input.businessName?.trim() || 'Untitled',
+          primaryColor: (input.primaryColor || '').trim().match(/^#[0-9a-fA-F]{6}$/)
+            ? (input.primaryColor as string).trim()
+            : '#6366f1',
         };
       }
     }
@@ -235,13 +252,27 @@ async function classifyIntent(
   }
 }
 
-async function buildSite(client: Anthropic, brief: string, businessType: string, features: string): Promise<string> {
+async function buildSite(
+  client: Anthropic,
+  brief: string,
+  businessType: string,
+  businessName: string,
+  primaryColor: string,
+  features: string,
+): Promise<string> {
   const userMsg = [
     `Build a complete, production-quality website.`,
     ``,
     `Brief: ${brief}`,
+    `Business name: ${businessName}`,
     `Type: ${businessType}`,
+    `Primary color: ${primaryColor}`,
     features ? `Required capabilities: ${features}` : '',
+    ``,
+    `IMPORTANT placeholders to use exactly as specified:`,
+    `- For the brand logo image: src="LOGO_PLACEHOLDER" (used in navbar AND footer).`,
+    `- For all photographic images: src="IMG:keyword1,keyword2" (e.g. src="IMG:modern,office", src="IMG:woman,smiling|portrait"). These are replaced with real Unsplash/Pexels images server-side.`,
+    `- The brand wordmark next to the logo should be the business name "${businessName}".`,
     ``,
     `Return ONLY the complete HTML file starting with <!DOCTYPE html>.`,
   ].filter(Boolean).join('\n');
@@ -347,18 +378,56 @@ export async function POST(request: Request) {
         }
 
         send({ type: 'ack', reply: intent.ack });
-        send({ type: 'progress', step: 1, message: 'Designing your site...' });
+        send({ type: 'progress', step: 1, message: 'Crafting your brand...' });
+
+        // ── Logo + HTML in parallel ──
+        const logoPromise = generateLogo({
+          businessName: intent.businessName,
+          businessType: intent.businessType,
+          primaryColor: intent.primaryColor,
+          brief: intent.brief,
+        }).catch(() => null);
+
+        send({ type: 'progress', step: 2, message: 'Designing layout...' });
 
         let html: string;
         try {
-          html = await buildSite(client, intent.brief, intent.businessType, featureNote);
+          html = await buildSite(
+            client,
+            intent.brief,
+            intent.businessType,
+            intent.businessName,
+            intent.primaryColor,
+            featureNote,
+          );
         } catch (e) {
           send({ type: 'error', error: e instanceof Error ? e.message : 'Generation failed' });
           controller.close();
           return;
         }
 
-        send({ type: 'progress', step: 3, message: 'Almost ready...' });
+        send({ type: 'progress', step: 3, message: 'Adding photos & logo...' });
+
+        // Substitute placeholders: real images + AI logo
+        try {
+          html = await replaceImagePlaceholders(html);
+        } catch {
+          // continue with placeholders if image API fails
+        }
+
+        const logoDataUrl = await logoPromise;
+        if (logoDataUrl) {
+          html = html.split('LOGO_PLACEHOLDER').join(logoDataUrl);
+        } else {
+          // Fallback: replace with a transparent 1x1 so the site doesn't break
+          html = html.split('LOGO_PLACEHOLDER').join(
+            'data:image/svg+xml;utf8,' + encodeURIComponent(
+              `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="${intent.primaryColor}"/><text x="16" y="22" font-family="system-ui,sans-serif" font-size="16" font-weight="700" fill="white" text-anchor="middle">${(intent.businessName[0] || 'S').toUpperCase()}</text></svg>`
+            )
+          );
+        }
+
+        send({ type: 'progress', step: 4, message: 'Almost ready...' });
 
         await admin.from('chat_history').insert({
           user_id: user.id,
@@ -367,7 +436,8 @@ export async function POST(request: Request) {
         });
 
         const projectName =
-          intent.brief.split(/\s+/).slice(0, 5).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ').slice(0, 60) ||
+          intent.businessName.slice(0, 60) ||
+          intent.brief.split(/\s+/).slice(0, 5).join(' ').slice(0, 60) ||
           prompt.split(/\s+/).slice(0, 4).join(' ').slice(0, 60) ||
           'Untitled';
 
