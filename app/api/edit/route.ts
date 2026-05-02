@@ -1,13 +1,34 @@
 import { NextResponse } from 'next/server';
+import Anthropic from '@anthropic-ai/sdk';
 import { createClient, createAdminClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
-const MODEL_EDIT = 'anthropic/claude-sonnet-4.5';
+const MODEL_EDIT = 'claude-sonnet-4-6';
 
-const EDIT_PROMPT = `You are editing an existing website. The user wants to modify it. Return the complete updated HTML file with the requested changes applied. Keep everything else exactly the same. Preserve Tailwind CDN, Google Fonts, Lucide icons, and the existing primary color unless the user asks to change it. Return ONLY the HTML file starting with <!DOCTYPE html>. No explanations, no markdown fences.`;
+const EDIT_SYSTEM = `You are editing an existing single-file HTML website. The user will give you a change request.
+
+RULES:
+- Apply EXACTLY what the user asks. Don't redesign anything they didn't mention.
+- Keep all existing structure, copy, and styling unless the user asks to change it.
+- Preserve the existing primary color, fonts, and layout unless the user asks otherwise.
+- Keep Tailwind CDN, Google Fonts, Lucide icons exactly as they are.
+- Maintain responsive behavior (don't break mobile/tablet layouts).
+- If the user asks for a small change (e.g. "make the hero bigger", "change the title to X"), make ONLY that change.
+- If the user asks for a big change (e.g. "redesign as dark mode", "add a pricing section"), do it fully and tastefully — match the existing design language.
+- NEVER add Lorem Ipsum or generic placeholder copy. Use real-sounding text in the same language as the existing site.
+
+OUTPUT FORMAT:
+Return ONLY the complete updated HTML file. Start with <!DOCTYPE html>. No markdown fences. No explanations.`;
+
+function stripFences(s: string): string {
+  return s
+    .replace(/^```(?:html|HTML)?\s*\n?/i, '')
+    .replace(/\n?```\s*$/i, '')
+    .trim();
+}
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -20,6 +41,11 @@ export async function POST(request: Request) {
   }
   if (!message || typeof message !== 'string') {
     return NextResponse.json({ error: 'Missing message' }, { status: 400 });
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: 'ANTHROPIC_API_KEY is not configured' }, { status: 500 });
   }
 
   const admin = createAdminClient();
@@ -52,43 +78,40 @@ export async function POST(request: Request) {
     content: message,
   });
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey || apiKey === 'PLACEHOLDER_REPLACE_ME') {
-    return NextResponse.json({ error: 'OPENROUTER_API_KEY is not configured' }, { status: 500 });
-  }
-
-  const userPayload = `User edit request:\n${message}\n\nCurrent HTML:\n${project.generated_code}`;
+  const client = new Anthropic({ apiKey });
 
   let html = '';
   try {
-    const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://sitezix.vercel.app',
-        'X-Title': 'Sitezix',
-      },
-      body: JSON.stringify({
-        model: MODEL_EDIT,
-        messages: [
-          { role: 'system', content: EDIT_PROMPT },
-          { role: 'user', content: userPayload },
-        ],
-        max_tokens: 12000,
-      }),
+    const res = await client.messages.create({
+      model: MODEL_EDIT,
+      max_tokens: 16000,
+      system: EDIT_SYSTEM,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `Current HTML:\n\n${project.generated_code}`,
+              cache_control: { type: 'ephemeral' },
+            },
+            {
+              type: 'text',
+              text: `Change request: ${message}\n\nReturn the full updated HTML file.`,
+            },
+          ],
+        },
+      ],
     });
-    const json = await upstream.json();
-    if (!upstream.ok) {
-      return NextResponse.json({ error: json?.error?.message || 'OpenRouter error' }, { status: 502 });
+
+    const textBlock = res.content.find((b) => b.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      return NextResponse.json({ error: 'Model returned no content' }, { status: 502 });
     }
-    html = (json?.choices?.[0]?.message?.content || '')
-      .replace(/^```html\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/```\s*$/i, '')
-      .trim();
+    html = stripFences(textBlock.text);
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : 'Edit failed' }, { status: 500 });
+    const msg = e instanceof Error ? e.message : 'Edit failed';
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 
   if (!html || !/<!DOCTYPE html>/i.test(html)) {
