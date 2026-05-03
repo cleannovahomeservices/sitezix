@@ -3,6 +3,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient, createAdminClient } from '@/lib/supabase/server';
 import { generateLogo } from '@/lib/logo';
 import { replaceImagePlaceholders } from '@/lib/images';
+import { resolveLayoutPromptExtra } from '@/lib/template-prompts';
+import { packagingShopTemplate } from '@/lib/template-html/packaging-shop';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -259,7 +261,9 @@ async function buildSite(
   businessName: string,
   primaryColor: string,
   features: string,
+  templateId: string | undefined,
 ): Promise<string> {
+  const layoutExtra = resolveLayoutPromptExtra(businessType, templateId);
   const userMsg = [
     `Build a complete, production-quality website.`,
     ``,
@@ -268,6 +272,7 @@ async function buildSite(
     `Type: ${businessType}`,
     `Primary color: ${primaryColor}`,
     features ? `Required capabilities: ${features}` : '',
+    layoutExtra ? `${layoutExtra}` : '',
     ``,
     `IMPORTANT placeholders to use exactly as specified:`,
     `- For the brand logo image: src="LOGO_PLACEHOLDER" (used in navbar AND footer).`,
@@ -301,12 +306,61 @@ async function buildSite(
   return html;
 }
 
+const TEMPLATE_REGISTRY: Record<string, string> = {
+  'packaging-shop': packagingShopTemplate,
+};
+
+async function buildSiteFromTemplate(
+  client: Anthropic,
+  brief: string,
+  businessName: string,
+  primaryColor: string,
+  templateId: string,
+): Promise<string | null> {
+  const template = TEMPLATE_REGISTRY[templateId];
+  if (!template) return null;
+
+  const res = await client.messages.create({
+    model: MODEL_CHAT,
+    max_tokens: 1600,
+    system: 'You are a content writer for product websites. Return ONLY a valid JSON object — no markdown fences, no explanation, no trailing text.',
+    messages: [
+      {
+        role: 'user',
+        content: `Fill in the template variables for a packaging/supplies shop.\n\nBusiness name: ${businessName}\nBrief: ${brief}\nPrimary color: ${primaryColor}\n\nReturn a JSON object with exactly these keys:\n{\n  "SHOP_TITLE": "short store headline",\n  "BRAND_TAGLINE": "one-line tagline",\n  "SEARCH_PLACEHOLDER": "search input hint text",\n  "CURRENCY": "symbol only (R/€/$/£)",\n  "CAT1":"","CAT2":"","CAT3":"","CAT4":"","CAT5":"","CAT6":"","CAT7":"","CAT8":"",\n  "TF1":"","TF2":"","TF3":"","TF4":"","TF5":"","TF6":"","TF7":"","TF8":"","TF9":"","TF10":"",\n  "MF1":"","MF2":"","MF3":"","MF4":"","MF5":"","MF6":"","MF7":"","MF8":"",\n  "P1_NAME":"","P1_PRICE":"9.99","P1_BADGE":"New","P1_IMG":"kraft,cup,coffee",\n  "P2_NAME":"","P2_PRICE":"","P2_BADGE":"","P2_IMG":"",\n  "P3_NAME":"","P3_PRICE":"","P3_BADGE":"","P3_IMG":"",\n  "P4_NAME":"","P4_PRICE":"","P4_BADGE":"","P4_IMG":"",\n  "P5_NAME":"","P5_PRICE":"","P5_BADGE":"","P5_IMG":"",\n  "P6_NAME":"","P6_PRICE":"","P6_BADGE":"","P6_IMG":"",\n  "P7_NAME":"","P7_PRICE":"","P7_BADGE":"","P7_IMG":"",\n  "P8_NAME":"","P8_PRICE":"","P8_BADGE":"","P8_IMG":"",\n  "P9_NAME":"","P9_PRICE":"","P9_BADGE":"","P9_IMG":"",\n  "P10_NAME":"","P10_PRICE":"","P10_BADGE":"","P10_IMG":"",\n  "P11_NAME":"","P11_PRICE":"","P11_BADGE":"","P11_IMG":"",\n  "P12_NAME":"","P12_PRICE":"","P12_BADGE":"","P12_IMG":"",\n  "PROMO_THRESHOLD": "threshold value like R500 or €50",\n  "REWARDS_PERCENT": "percentage like 5%",\n  "CTA_TITLE": "call-to-action headline",\n  "CTA_SUBTITLE": "small eyebrow text above CTA",\n  "FOOTER_TAGLINE": "short brand description for footer",\n  "CONTACT_URL": "#",\n  "FACEBOOK_URL": "#",\n  "INSTAGRAM_URL": "#",\n  "LINKEDIN_URL": "#"\n}\n\nRules:\n- CURRENCY: symbol only, no spaces (R, €, $, £) — infer from locale in brief\n- Pn_PRICE: number only, no currency symbol (e.g. "12.99")\n- Pn_BADGE: "New", "Promo", "Best Seller", "Eco" or "" (empty = no badge)\n- Pn_IMG: 2-3 comma-separated keywords for Unsplash search (e.g. "kraft,cup,coffee")\n- CAT1-8: short category names relevant to the industry\n- TF1-10: type/product filter labels relevant to the industry\n- MF1-8: material filter labels relevant to the industry\n- All text in the same language as the brief`,
+      },
+    ],
+  });
+
+  const textBlock = res.content.find((b) => b.type === 'text');
+  if (!textBlock || textBlock.type !== 'text') return null;
+
+  let vars: Record<string, string>;
+  try {
+    const raw = textBlock.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
+    vars = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  vars['BRAND_NAME'] = businessName;
+  vars['PRIMARY_COLOR'] = primaryColor;
+  vars['COPYRIGHT_YEAR'] = String(new Date().getFullYear());
+
+  let html = template;
+  for (const [key, value] of Object.entries(vars)) {
+    html = html.split(`{{${key}}}`).join(value ?? '');
+  }
+
+  return html;
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { prompt, features, history } = await request.json().catch(() => ({}));
+  const { prompt, features, history, templateId } = await request.json().catch(() => ({}));
   if (!prompt || typeof prompt !== 'string') {
     return NextResponse.json({ error: 'Missing prompt' }, { status: 400 });
   }
@@ -392,14 +446,24 @@ export async function POST(request: Request) {
 
         let html: string;
         try {
-          html = await buildSite(
-            client,
-            intent.brief,
-            intent.businessType,
-            intent.businessName,
-            intent.primaryColor,
-            featureNote,
-          );
+          const tid = typeof templateId === 'string' ? templateId.slice(0, 80) : undefined;
+          const fromTemplate = tid
+            ? await buildSiteFromTemplate(client, intent.brief, intent.businessName, intent.primaryColor, tid).catch(() => null)
+            : null;
+
+          if (fromTemplate) {
+            html = fromTemplate;
+          } else {
+            html = await buildSite(
+              client,
+              intent.brief,
+              intent.businessType,
+              intent.businessName,
+              intent.primaryColor,
+              featureNote,
+              tid,
+            );
+          }
         } catch (e) {
           send({ type: 'error', error: e instanceof Error ? e.message : 'Generation failed' });
           controller.close();

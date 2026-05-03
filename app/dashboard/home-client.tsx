@@ -5,14 +5,25 @@ import { useRouter } from 'next/navigation';
 import { Plus, Send, Loader2, Layers, User, ShoppingCart, FileText, BarChart3, Globe, Zap, Copy, Download, ExternalLink, Sparkles, MessageSquare } from 'lucide-react';
 import { useToast } from '@/components/toast';
 
-const TEMPLATES = [
-  { name: 'SaaS Landing', desc: 'Hero, pricing & CTA', icon: Layers, color: '#a78bfa', bg: 'rgba(109,40,217,0.18)', prompt: 'SaaS landing page with hero section, pricing tiers, features grid, and customer testimonials' },
-  { name: 'Portfolio', desc: 'Personal showcase', icon: User, color: '#60a5fa', bg: 'rgba(59,130,246,0.18)', prompt: 'Personal portfolio website with about section, project showcase, skills, and contact form' },
-  { name: 'E-commerce', desc: 'Shop & checkout', icon: ShoppingCart, color: '#34d399', bg: 'rgba(16,185,129,0.16)', prompt: 'E-commerce store with product catalog, shopping cart, and checkout flow' },
-  { name: 'Blog', desc: 'Articles & content', icon: FileText, color: '#fbbf24', bg: 'rgba(245,158,11,0.15)', prompt: 'Modern blog with article listing, categories, search, and newsletter signup' },
-  { name: 'Dashboard', desc: 'Analytics & data', icon: BarChart3, color: '#f472b6', bg: 'rgba(236,72,153,0.15)', prompt: 'Admin dashboard with charts, KPI cards, data tables, and sidebar navigation' },
-  { name: 'Agency', desc: 'Services & team', icon: Globe, color: '#818cf8', bg: 'rgba(99,102,241,0.18)', prompt: 'Creative agency website with services, team members, case studies, and contact' },
-  { name: 'Startup', desc: 'Launch & waitlist', icon: Zap, color: '#f87171', bg: 'rgba(239,68,68,0.14)', prompt: 'Startup landing page with waitlist signup, hero, features, and early access form' },
+type TemplateDef = {
+  id: string;
+  name: string;
+  desc: string;
+  icon: typeof Layers;
+  color: string;
+  bg: string;
+  prompt: string;
+};
+
+const TEMPLATES: TemplateDef[] = [
+  { id: 'saas-landing', name: 'SaaS Landing', desc: 'Hero, pricing & CTA', icon: Layers, color: '#a78bfa', bg: 'rgba(109,40,217,0.18)', prompt: 'SaaS landing page with hero section, pricing tiers, features grid, and customer testimonials' },
+  { id: 'portfolio', name: 'Portfolio', desc: 'Personal showcase', icon: User, color: '#60a5fa', bg: 'rgba(59,130,246,0.18)', prompt: 'Personal portfolio website with about section, project showcase, skills, and contact form' },
+  { id: 'ecommerce-shop-catalog', name: 'E-commerce', desc: 'Shop & checkout', icon: ShoppingCart, color: '#34d399', bg: 'rgba(16,185,129,0.16)', prompt: 'E-commerce store with product catalog, shopping cart, and checkout flow' },
+  { id: 'packaging-shop', name: 'Packaging Shop', desc: 'B2B supplies store', icon: ShoppingCart, color: '#e5e7eb', bg: 'rgba(229,231,235,0.1)', prompt: 'B2B packaging and supplies shop with sidebar filters, product grid, and category pills' },
+  { id: 'blog', name: 'Blog', desc: 'Articles & content', icon: FileText, color: '#fbbf24', bg: 'rgba(245,158,11,0.15)', prompt: 'Modern blog with article listing, categories, search, and newsletter signup' },
+  { id: 'dashboard-admin', name: 'Dashboard', desc: 'Analytics & data', icon: BarChart3, color: '#f472b6', bg: 'rgba(236,72,153,0.15)', prompt: 'Admin dashboard with charts, KPI cards, data tables, and sidebar navigation' },
+  { id: 'agency', name: 'Agency', desc: 'Services & team', icon: Globe, color: '#818cf8', bg: 'rgba(99,102,241,0.18)', prompt: 'Creative agency website with services, team members, case studies, and contact' },
+  { id: 'startup-waitlist', name: 'Startup', desc: 'Launch & waitlist', icon: Zap, color: '#f87171', bg: 'rgba(239,68,68,0.14)', prompt: 'Startup landing page with waitlist signup, hero, features, and early access form' },
 ];
 
 const PHRASES = ["Let's build something", "What will you create", "Your idea, live in seconds"];
@@ -40,6 +51,7 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
   const router = useRouter();
   const { toast } = useToast();
   const [prompt, setPrompt] = useState('');
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [pills, setPills] = useState({ login: false, payments: false, deploy: false });
   const [credits, setCredits] = useState(initialCredits);
   const [generating, setGenerating] = useState(false);
@@ -57,9 +69,16 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
   // Pull prompt from templates page if set
   useEffect(() => {
     const stored = typeof window !== 'undefined' ? sessionStorage.getItem('szx_prompt') : null;
+    const tmpl = typeof window !== 'undefined' ? sessionStorage.getItem('szx_template_id') : null;
     if (stored) {
       setPrompt(stored);
       sessionStorage.removeItem('szx_prompt');
+    }
+    if (tmpl) {
+      setSelectedTemplateId(tmpl);
+      sessionStorage.removeItem('szx_template_id');
+    }
+    if (stored || tmpl) {
       setTimeout(() => taRef.current?.focus(), 50);
     }
   }, []);
@@ -96,8 +115,9 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
     ta.style.height = Math.min(ta.scrollHeight, 180) + 'px';
   }
 
-  function applyTemplate(p: string) {
-    setPrompt(p);
+  function applyTemplate(t: TemplateDef) {
+    setPrompt(t.prompt);
+    setSelectedTemplateId(t.id);
     setTimeout(autosize, 0);
     taRef.current?.focus();
   }
@@ -106,6 +126,8 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
     const value = prompt.trim();
     if (!value || generating) { taRef.current?.focus(); return; }
 
+    const tmplIdSnapshot = selectedTemplateId;
+
     const historyToSend = chat
       .filter((m) => !m.pending)
       .map((m) => ({ role: m.role, content: m.content }));
@@ -113,6 +135,7 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
     // Optimistically add the user's message + a pending assistant placeholder.
     setChat((c) => [...c, { role: 'user', content: value }, { role: 'assistant', content: 'Pensando…', pending: true }]);
     setPrompt('');
+    setSelectedTemplateId(null);
     setTimeout(() => { if (taRef.current) { taRef.current.style.height = 'auto'; } }, 0);
 
     setGenerating(true);
@@ -134,7 +157,12 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: value, features: pills, history: historyToSend }),
+        body: JSON.stringify({
+          prompt: value,
+          features: pills,
+          history: historyToSend,
+          ...(tmplIdSnapshot ? { templateId: tmplIdSnapshot } : {}),
+        }),
       });
 
       if (!res.ok || !res.body) {
@@ -314,6 +342,7 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
     setChat([]);
     setEditInput('');
     setPrompt('');
+    setSelectedTemplateId(null);
     setPills({ login: false, payments: false, deploy: false });
     router.refresh();
   }
@@ -471,7 +500,11 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
           <textarea
             ref={taRef}
             value={prompt}
-            onChange={(e) => { setPrompt(e.target.value); autosize(); }}
+            onChange={(e) => {
+              setPrompt(e.target.value);
+              setSelectedTemplateId(null);
+              autosize();
+            }}
             onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); handleGenerate(); } }}
             placeholder="Describe the website you want to build..."
             className="w-full px-5 pt-[18px] pb-2 bg-transparent border-0 outline-none text-[14.5px] text-[#111] resize-none leading-[1.6] min-h-[72px] font-jakarta placeholder:text-black/30"
@@ -535,8 +568,8 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
                 const Icon = t.icon;
                 return (
                   <button
-                    key={t.name}
-                    onClick={() => applyTemplate(t.prompt)}
+                    key={t.id}
+                    onClick={() => applyTemplate(t)}
                     className="shrink-0 w-[155px] p-3.5 rounded-[11px] bg-white/[0.04] border border-white/[0.07] cursor-pointer text-left transition-all hover:bg-white/[0.07] hover:border-white/[0.13] hover:-translate-y-0.5"
                   >
                     <div className="w-[30px] h-[30px] rounded-lg flex items-center justify-center mb-2.5" style={{ background: t.bg }}>

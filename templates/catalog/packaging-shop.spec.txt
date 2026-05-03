@@ -1,0 +1,9 @@
+SITEZIX + VERCEL — plantilla "packaging / suministros shop" (estilo Yucca)
+
+- El HTML final NO sale de este archivo. Sitezix genera un único index.html vía Claude con Tailwind CDN, Lucide, IMG:keywords y LOGO_PLACEHOLDER.
+- Layout detallado (navbar, header con búsqueda, filtros sticky, sidebar, rejilla de productos B2B): ver lib/template-prompts.ts (PACKAGING_SHOP_PROMPT).
+- Deploy: mismo repo — /api/deploy sube ese HTML como index.html estático en Vercel.
+- Dashboard: elegir plantilla "Packaging Shop" guarda szx_template_id = packaging-shop y el POST /api/generate envía templateId.
+- Inspirado en: yucca.co.za — fondo blanco, tipografía dark (#1D1D1B), sidebar accordion filtros, cards con precios B2B.
+
+Añadir más plantillas: añadir bloque NUEVA_PLANTILLA_PROMPT en lib/template-prompts.ts + id en manifest.json + spec.txt.

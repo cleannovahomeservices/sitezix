@@ -1,0 +1,30 @@
+{
+  "templates": [
+    {
+      "id": "ecommerce-shop-catalog",
+      "name": "Tienda catálogo + filtros",
+      "category": "ecommerce",
+      "generator": {
+        "module": "lib/template-prompts.ts",
+        "method": "resolveLayoutPromptExtra",
+        "dashboardTemplateId": "ecommerce-shop-catalog"
+      },
+      "files": ["ecommerce-shop-catalog.spec.txt"],
+      "keywords": ["shop", "store", "tienda", "catalog", "filtros", "product grid", "vercel"],
+      "notes": "Inyecta instrucciones extra en la generación cuando templateId coincide o Haiku marca tipo ecommerce/tienda."
+    },
+    {
+      "id": "packaging-shop",
+      "name": "Tienda packaging / suministros B2B",
+      "category": "ecommerce",
+      "generator": {
+        "module": "lib/template-prompts.ts",
+        "method": "resolveLayoutPromptExtra",
+        "dashboardTemplateId": "packaging-shop"
+      },
+      "files": ["packaging-shop.spec.txt"],
+      "keywords": ["packaging", "envases", "embalaje", "supplies", "b2b", "takeaway", "food packaging", "shop"],
+      "notes": "Estilo Yucca: fondo blanco, tipografía dark, sidebar filtros, rejilla de producto B2B/B2C. Inspirado en yucca.co.za."
+    }
+  ]
+}

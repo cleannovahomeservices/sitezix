@@ -1,0 +1,8 @@
+SITEZIX + VERCEL — plantilla "tienda catálogo"
+
+- El HTML final NO sale de este archivo. Sitezix genera un único index.html vía Claude con Tailwind CDN, Lucide, IMG:keywords y LOGO_PLACEHOLDER.
+- Layout detallado (filtros, rejilla, promos insertadas): ver lib/template-prompts.ts (ECOMMERCE_CATALOG_PROMPT).
+- Deploy: mismo repo — /api/deploy sube ese HTML como index.html estático en Vercel.
+- Dashboard: elegir plantilla E-commerce guarda szx_template_id = ecommerce-shop-catalog y el POST /api/generate envía templateId.
+
+Siguientes plantillas: añadir bloques similares en lib/template-prompts.ts + id en Templates / home Quick start.
