@@ -502,7 +502,6 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
             value={prompt}
             onChange={(e) => {
               setPrompt(e.target.value);
-              setSelectedTemplateId(null);
               autosize();
             }}
             onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); handleGenerate(); } }}
@@ -516,6 +515,16 @@ export function HomeClient({ userName, credits: initialCredits }: { userName: st
               <Plus size={14} strokeWidth={2.2} />
             </button>
             <div className="w-px h-[18px] bg-black/10 shrink-0" />
+            {selectedTemplateId && (
+              <button
+                type="button"
+                onClick={() => setSelectedTemplateId(null)}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-100 border border-violet-200 text-[11px] font-semibold text-violet-700 shrink-0"
+              >
+                {TEMPLATES.find(t => t.id === selectedTemplateId)?.name ?? selectedTemplateId}
+                <span className="text-violet-400 ml-0.5">✕</span>
+              </button>
+            )}
             <div className="flex gap-1.5 flex-1">
               {(['login','payments','deploy'] as const).map((k) => (
                 <button
