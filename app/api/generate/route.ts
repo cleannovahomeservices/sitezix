@@ -323,54 +323,58 @@ async function buildSiteFromTemplate(
   const fillPrompt = `Business name: ${businessName}
 Description: ${brief}
 
-You are filling content for a shop website. Return ONLY a valid JSON object — no markdown, no explanation, nothing else before or after the JSON.
+Return ONLY a valid JSON object. No markdown, no text before or after.
 
-Fill every key with real content that matches the business. Language must match the description.
+Fill every key with real content matching this business. Language must match the description.
+
+RULES:
+- CURRENCY: symbol only (R, €, $, £) — infer from locale
+- P*_PRICE: digits only, no symbol (e.g. "12.99")
+- P*_BADGE: "New", "Promo", "Best Seller", "Eco" or "" (empty = no badge)
+- P*_IMG: 2-3 comma-separated image search keywords (e.g. "kraft,bag,packaging")
+- P*_CAT: must be EXACTLY one of the values you set for CAT1–CAT6 (exact match, same case)
+- P*_SIZES: comma-separated size variants like "250ml,500ml,1L" or "" if not applicable
+- TF1–TF6: product type subcategories (e.g. "Flat Pouches", "Stand-up Bags")
+- MF1–MF6: material types (e.g. "Kraft Paper", "PET", "Biodegradable")
+- Spread products evenly across CAT1–CAT6 (2 products per category)
 
 {
   "SHOP_TITLE": "4-6 word store headline",
   "BRAND_TAGLINE": "One sentence describing what the store sells",
-  "SEARCH_PLACEHOLDER": "Short search hint e.g. Search products...",
-  "CURRENCY": "Just the symbol: R or € or $ or £ — infer from the description locale",
-  "CAT1": "Category name", "CAT2": "Category name", "CAT3": "Category name", "CAT4": "Category name",
-  "CAT5": "Category name", "CAT6": "Category name", "CAT7": "Category name", "CAT8": "Category name",
-  "TF1": "Type filter", "TF2": "Type filter", "TF3": "Type filter", "TF4": "Type filter", "TF5": "Type filter",
-  "TF6": "Type filter", "TF7": "Type filter", "TF8": "Type filter", "TF9": "Type filter", "TF10": "Type filter",
-  "MF1": "Material/attribute", "MF2": "Material/attribute", "MF3": "Material/attribute", "MF4": "Material/attribute",
-  "MF5": "Material/attribute", "MF6": "Material/attribute", "MF7": "Material/attribute", "MF8": "Material/attribute",
-  "P1_NAME": "Product name", "P1_PRICE": "19.99", "P1_BADGE": "New", "P1_IMG": "keyword1,keyword2",
-  "P2_NAME": "Product name", "P2_PRICE": "34.99", "P2_BADGE": "", "P2_IMG": "keyword1,keyword2",
-  "P3_NAME": "Product name", "P3_PRICE": "12.50", "P3_BADGE": "Promo", "P3_IMG": "keyword1,keyword2",
-  "P4_NAME": "Product name", "P4_PRICE": "22.00", "P4_BADGE": "", "P4_IMG": "keyword1,keyword2",
-  "P5_NAME": "Product name", "P5_PRICE": "8.99", "P5_BADGE": "", "P5_IMG": "keyword1,keyword2",
-  "P6_NAME": "Product name", "P6_PRICE": "45.00", "P6_BADGE": "Best Seller", "P6_IMG": "keyword1,keyword2",
-  "P7_NAME": "Product name", "P7_PRICE": "15.00", "P7_BADGE": "", "P7_IMG": "keyword1,keyword2",
-  "P8_NAME": "Product name", "P8_PRICE": "28.00", "P8_BADGE": "New", "P8_IMG": "keyword1,keyword2",
-  "P9_NAME": "Product name", "P9_PRICE": "19.99", "P9_BADGE": "", "P9_IMG": "keyword1,keyword2",
-  "P10_NAME": "Product name", "P10_PRICE": "55.00", "P10_BADGE": "", "P10_IMG": "keyword1,keyword2",
-  "P11_NAME": "Product name", "P11_PRICE": "9.50", "P11_BADGE": "Eco", "P11_IMG": "keyword1,keyword2",
-  "P12_NAME": "Product name", "P12_PRICE": "32.00", "P12_BADGE": "", "P12_IMG": "keyword1,keyword2",
-  "PROMO_THRESHOLD": "Free shipping threshold e.g. €50 or R500",
-  "REWARDS_PERCENT": "e.g. 5%",
-  "CTA_TITLE": "A compelling 6-10 word call to action",
-  "CTA_SUBTITLE": "Short uppercase eyebrow e.g. READY TO ORDER",
+  "SEARCH_PLACEHOLDER": "Short search hint",
+  "CURRENCY": "€",
+  "CAT1": "Category name", "CAT2": "Category name", "CAT3": "Category name",
+  "CAT4": "Category name", "CAT5": "Category name", "CAT6": "Category name",
+  "TF1": "Type filter", "TF2": "Type filter", "TF3": "Type filter",
+  "TF4": "Type filter", "TF5": "Type filter", "TF6": "Type filter",
+  "MF1": "Material", "MF2": "Material", "MF3": "Material",
+  "MF4": "Material", "MF5": "Material", "MF6": "Material",
+  "P1_NAME": "Product name", "P1_PRICE": "19.99", "P1_BADGE": "New", "P1_IMG": "kw1,kw2", "P1_CAT": "CAT1 value", "P1_SIZES": "",
+  "P2_NAME": "Product name", "P2_PRICE": "34.99", "P2_BADGE": "", "P2_IMG": "kw1,kw2", "P2_CAT": "CAT1 value", "P2_SIZES": "S,M,L",
+  "P3_NAME": "Product name", "P3_PRICE": "12.50", "P3_BADGE": "Promo", "P3_IMG": "kw1,kw2", "P3_CAT": "CAT2 value", "P3_SIZES": "",
+  "P4_NAME": "Product name", "P4_PRICE": "22.00", "P4_BADGE": "", "P4_IMG": "kw1,kw2", "P4_CAT": "CAT2 value", "P4_SIZES": "",
+  "P5_NAME": "Product name", "P5_PRICE": "8.99", "P5_BADGE": "", "P5_IMG": "kw1,kw2", "P5_CAT": "CAT3 value", "P5_SIZES": "",
+  "P6_NAME": "Product name", "P6_PRICE": "45.00", "P6_BADGE": "Best Seller", "P6_IMG": "kw1,kw2", "P6_CAT": "CAT3 value", "P6_SIZES": "",
+  "P7_NAME": "Product name", "P7_PRICE": "15.00", "P7_BADGE": "", "P7_IMG": "kw1,kw2", "P7_CAT": "CAT4 value", "P7_SIZES": "",
+  "P8_NAME": "Product name", "P8_PRICE": "28.00", "P8_BADGE": "New", "P8_IMG": "kw1,kw2", "P8_CAT": "CAT4 value", "P8_SIZES": "250ml,500ml",
+  "P9_NAME": "Product name", "P9_PRICE": "19.99", "P9_BADGE": "", "P9_IMG": "kw1,kw2", "P9_CAT": "CAT5 value", "P9_SIZES": "",
+  "P10_NAME": "Product name", "P10_PRICE": "55.00", "P10_BADGE": "", "P10_IMG": "kw1,kw2", "P10_CAT": "CAT5 value", "P10_SIZES": "",
+  "P11_NAME": "Product name", "P11_PRICE": "9.50", "P11_BADGE": "Eco", "P11_IMG": "kw1,kw2", "P11_CAT": "CAT6 value", "P11_SIZES": "",
+  "P12_NAME": "Product name", "P12_PRICE": "32.00", "P12_BADGE": "", "P12_IMG": "kw1,kw2", "P12_CAT": "CAT6 value", "P12_SIZES": "",
+  "PROMO_THRESHOLD": "€50",
+  "REWARDS_PERCENT": "5%",
+  "CTA_TITLE": "6-10 word call to action",
+  "CTA_SUBTITLE": "SHORT UPPERCASE EYEBROW",
   "FOOTER_TAGLINE": "One line brand description",
   "CONTACT_URL": "#",
   "FACEBOOK_URL": "#",
   "INSTAGRAM_URL": "#",
   "LINKEDIN_URL": "#"
-}
-
-Replace ALL placeholder descriptions (words in quotes like "Product name", "Category name", etc.) with real values for this business.
-- CURRENCY: symbol only, no spaces
-- P*_PRICE: digits only, no currency symbol (e.g. "12.99")
-- P*_BADGE: "New", "Promo", "Best Seller", "Eco" or "" (empty string = no badge)
-- P*_IMG: 2-3 comma-separated keywords for product image search (e.g. "ceramic,bowl,white")
-- All 12 products must have a real name, price, and image keywords`;
+}`;
 
   const res = await client.messages.create({
     model: MODEL_CHAT,
-    max_tokens: 2000,
+    max_tokens: 3000,
     system: 'You fill website template variables. Return ONLY a valid JSON object. No markdown fences, no text before or after the JSON.',
     messages: [{ role: 'user', content: fillPrompt }],
   });
@@ -473,11 +477,12 @@ export async function POST(request: Request) {
         }
 
         // ── Build path: ack first, then generate ──
-        if (profile.credits < 1) {
-          send({ type: 'error', error: 'No credits remaining' });
-          controller.close();
-          return;
-        }
+        // credits check disabled temporarily
+        // if (profile.credits < 1) {
+        //   send({ type: 'error', error: 'No credits remaining' });
+        //   controller.close();
+        //   return;
+        // }
 
         send({ type: 'ack', reply: intent.ack });
         send({ type: 'progress', step: 1, message: 'Crafting your brand...' });
@@ -574,7 +579,7 @@ export async function POST(request: Request) {
           return;
         }
 
-        await admin.from('profiles').update({ credits: profile.credits - 1 }).eq('id', user.id);
+        // await admin.from('profiles').update({ credits: profile.credits - 1 }).eq('id', user.id);
 
         send({ type: 'complete', projectId: project.id, html });
       } catch (e) {
