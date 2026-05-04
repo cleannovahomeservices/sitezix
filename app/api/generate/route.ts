@@ -373,7 +373,7 @@ RULES:
 }`;
 
   const res = await client.messages.create({
-    model: MODEL_CHAT,
+    model: MODEL_BUILD,
     max_tokens: 3000,
     system: 'You fill website template variables. Return ONLY a valid JSON object. No markdown fences, no text before or after the JSON.',
     messages: [{ role: 'user', content: fillPrompt }],
